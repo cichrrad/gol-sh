@@ -129,6 +129,7 @@ void seed_initial(Grid &grid,
       if (chance(gen) < spawn_rate) {
         grid.emplace(x, y);
         Coord loc = {x, y};
+        heatmap[loc] = 0;
       }
     }
   }
@@ -201,18 +202,8 @@ bool update(Grid &current,
       next.insert({x, y});
       if (x >= 0 && x < window_width && y >= 0 && y < window_height) {
         ++visible_alive_count;
-        // if (heatmap[loc] < cfg.heat_treshold) {
-        //   ++heatmap[loc];
-        //   ++heated_cells;
-        // }
       }
     }
-    // else if (heatmap[loc]>0) {
-    //   if (heatmap[loc] == cfg.heat_treshold) {
-    //     --heated_cells;
-    //   }
-    //   --heatmap[loc];
-    // }
   }
 
   for (const auto &[coord, count] : candidate_counts) {
@@ -222,16 +213,9 @@ bool update(Grid &current,
       Coord loc = {x, y};
       if (x >= 0 && x < window_width && y >= 0 && y < window_height) {
         ++visible_alive_count;
-        // if (heatmap[loc] < cfg.heat_treshold) {
-        //   ++heatmap[loc];
-        //   ++heated_cells;
-        // }
       }
     }
   }
-
-  // stable_ratio = (float)(heated_cells / visible_alive_count);
-
   current = std::move(next);
   return visible_alive_count > 0;
 }
