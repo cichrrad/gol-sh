@@ -31,10 +31,10 @@ using Grid = std::unordered_set<Coord, CoordHash>;
 struct Config {
   int window_width = -1;
   int window_height = -1;
-  int init_coverage = 10;
-  int stable_treshold = 70;
-  int heat_treshold = 50;
-  int speed_ms = 250;
+  unsigned int init_coverage = 10;
+  unsigned int stable_treshold = 70;
+  unsigned int heat_treshold = 50;
+  unsigned int speed_ms = 250;
   bool repopulate = true;
   std::string color_fg = "";
   std::string color_bg = "";
@@ -84,14 +84,15 @@ void parse_args(int argc, char *argv[], Config &cfg) {
       std::cout
           << "Usage: ./gof [OPTIONS]\n\n"
              "OPTIONS:\n"
-             " [--window-width N]\n"
-             " [--window-height N]\n"
+             " [--window-width N] (0 < N)\n"
+             " [--window-height N] (0 < N)\n"
+             " [--stable-treshold N] (0 < N)\n"
              " [--init-coverage PERCENT] (0 <= PERCENT <= 100)\n"
-             " [--speed MS] (100 <= MS <= 10000\n"
-             " [--color-fg COLOR]\n"
-             " [--color-bg COLOR]\n"
+             " [--speed MS] (100 <= MS <= 10000)\n"
+             " [--color-fg COLOR] (sets character color)\n"
+             " [--color-bg COLOR] (sets background color)\n"
              " [--one-universe] (disables repopulation)\n"
-             " [--tile-cell GLYPH]\n\n"
+             " [--tile-cell GLYPH] (sets cell character)\n\n"
              "COLOR:\n"
              " [BLACK,RED,GREEN,CYAN,MAGENTA,YELLOW,BLUE,WHITE,DEFAULT]\n";
       std::exit(0);
@@ -111,6 +112,8 @@ void parse_args(int argc, char *argv[], Config &cfg) {
       cfg.cell = value(arg);
     } else if (arg.rfind("--one-universe", 0) == 0) {
       cfg.repopulate = false;
+    } else if (arg.rfind("--stable-treshold", 0) == 0) {
+      cfg.stable_treshold = std::stoi(value(arg));
     };
   }
 };
@@ -179,43 +182,69 @@ bool update(Grid &current,
   std::unordered_map<Coord, int, CoordHash> candidate_counts;
   int visible_alive_count = 0;
 
+  // Count neighbor candidates for each alive cell
   for (const Coord &cell : current) {
-    int x = cell.first, y = cell.second, alive_neighbors = 0;
+    int x = cell.first;
+    int y = cell.second;
+    int alive_neighbors = 0;
 
     for (int dy = -1; dy <= 1; ++dy) {
       for (int dx = -1; dx <= 1; ++dx) {
-        if (dx == 0 && dy == 0)
+        if (dx == 0 && dy == 0) {
           continue;
+        }
+
         int nx = (x + dx + window_width) % window_width;
         int ny = (y + dy + window_height) % window_height;
         Coord neighbor = {nx, ny};
 
-        if (current.find(neighbor) != current.end())
+        if (current.find(neighbor) != current.end()) {
           ++alive_neighbors;
-        else
+        } else {
           ++candidate_counts[neighbor];
+        }
       }
     }
 
     Coord loc = {x, y};
     if (alive_neighbors == 2 || alive_neighbors == 3) {
-      next.insert({x, y});
-      if (x >= 0 && x < window_width && y >= 0 && y < window_height) {
-        ++visible_alive_count;
+      next.insert(loc);
+      ++visible_alive_count;
+      ++heatmap[loc];
+    } else {
+      if (heatmap[loc] > 0) {
+        --heatmap[loc];
       }
     }
   }
 
+  // Process births
   for (const auto &[coord, count] : candidate_counts) {
     if (count == 3) {
       next.insert(coord);
-      int x = coord.first, y = coord.second;
-      Coord loc = {x, y};
-      if (x >= 0 && x < window_width && y >= 0 && y < window_height) {
-        ++visible_alive_count;
+      ++visible_alive_count;
+      ++heatmap[coord];
+    } else {
+      if (heatmap[coord] > 0) {
+        --heatmap[coord];
       }
     }
   }
+
+  // Recompute heated_cells based on new generation
+  heated_cells = 0;
+  for (const Coord &cell : next) {
+    if (heatmap[cell] >= cfg.heat_treshold) {
+      ++heated_cells;
+    }
+  }
+
+  if (visible_alive_count > 0) {
+    stable_ratio = (100.0f * heated_cells / visible_alive_count);
+  } else {
+    stable_ratio = 0.0f;
+  }
+
   current = std::move(next);
   return visible_alive_count > 0;
 }
@@ -244,7 +273,6 @@ int main(int argc, char *argv[]) {
     std::cout << "\033[H"; // Cursor to top-left
     render(current, grid_window_width, grid_window_height, cfg, stable_ratio);
     std::this_thread::sleep_for(std::chrono::milliseconds(cfg.speed_ms));
-
     if (!update(current, heatmap, heated_cells, stable_ratio, grid_window_width,
                 grid_window_height, cfg)) {
       std::cout << "\033[H";
@@ -252,19 +280,34 @@ int main(int argc, char *argv[]) {
       if (cfg.repopulate) {
         current.clear();
         heatmap.clear();
-        heated_cells = 0;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
         std::cout
             << "\033[2J\033[H"; // clear screen and move cursor to top-left
         std::cout << "This universe is doomed, but there is another...\n";
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
         std::cout << "Creating new Big Bang...\n";
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
         seed_initial(current, heatmap, grid_window_width, grid_window_height,
                      cfg.init_coverage);
       } else {
 
         std::cout << "Simulation ended: all visible cells dead.\n";
         break;
+      }
+    } else if (stable_ratio >= cfg.stable_treshold) {
+
+      if (cfg.repopulate) {
+        current.clear();
+        heatmap.clear();
+        std::cout
+            << "\033[2J\033[H"; // clear screen and move cursor to top-left
+        std::cout << "This universe is (more than " << cfg.stable_treshold
+                  << " %) stable, and thus boring...\n";
+        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+        std::cout << "Creating new Big Bang...\n";
+        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+        seed_initial(current, heatmap, grid_window_width, grid_window_height,
+                     cfg.init_coverage);
       }
     }
   }
