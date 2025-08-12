@@ -32,7 +32,7 @@ struct Config {
   int window_width = -1;
   int window_height = -1;
   unsigned int init_coverage = 10;
-  unsigned int stable_treshold = 70;
+  unsigned int stable_treshold = 66;
   unsigned int heat_treshold = 50;
   unsigned int speed_ms = 250;
   bool repopulate = true;
