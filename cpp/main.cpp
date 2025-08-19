@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <climits>
 #include <cstdlib>
 #include <iostream>
 #include <random>
@@ -15,8 +16,8 @@ const std::string ANSI_RESET = "\033[0m";
 
 // Single color table: base codes for both fg (30–37) and bg (40–47)
 const std::unordered_map<std::string, int> COLORS = {
-    {"black", 0},   {"red", 1},  {"green", 2}, {"yellow", 3}, {"blue", 4},
-    {"magenta", 5}, {"cyan", 6}, {"white", 7}, {"default", 9}};
+    {"black", 0},   {"red", 1},  {"green", 2}, {"yellow", 3},  {"blue", 4},
+    {"magenta", 5}, {"cyan", 6}, {"white", 7}, {"default", 9}, {"rainbow", -1}};
 
 using Coord = std::pair<int, int>;
 
@@ -81,20 +82,20 @@ void parse_args(int argc, char *argv[], Config &cfg) {
     };
 
     if (arg == "--help") {
-      std::cout
-          << "Usage: ./gof [OPTIONS]\n\n"
-             "OPTIONS:\n"
-             " [--window-width N] (0 < N)\n"
-             " [--window-height N] (0 < N)\n"
-             " [--stable-treshold N] (0 < N)\n"
-             " [--init-coverage PERCENT] (0 <= PERCENT <= 100)\n"
-             " [--speed MS] (100 <= MS <= 10000)\n"
-             " [--color-fg COLOR] (sets character color)\n"
-             " [--color-bg COLOR] (sets background color)\n"
-             " [--one-universe] (disables repopulation)\n"
-             " [--tile-cell GLYPH] (sets cell character)\n\n"
-             "COLOR:\n"
-             " [BLACK,RED,GREEN,CYAN,MAGENTA,YELLOW,BLUE,WHITE,DEFAULT]\n";
+      std::cout << "Usage: ./gof [OPTIONS]\n\n"
+                   "OPTIONS:\n"
+                   " [--window-width N] (0 < N)\n"
+                   " [--window-height N] (0 < N)\n"
+                   " [--stable-treshold N] (0 < N)\n"
+                   " [--init-coverage PERCENT] (0 <= PERCENT <= 100)\n"
+                   " [--speed MS] (10 <= MS <= 10000)\n"
+                   " [--color-fg COLOR] (sets character color)\n"
+                   " [--color-bg COLOR] (sets background color)\n"
+                   " [--one-universe] (disables repopulation)\n"
+                   " [--tile-cell \"GLYPH\"] (sets cell character)\n\n"
+                   "COLOR:\n"
+                   " [black,red,green,cyan,magenta,yellow,blue,white,default,"
+                   "rainbow]\n";
       std::exit(0);
     } else if (arg.rfind("--window-width", 0) == 0) {
       cfg.window_width = std::stoi(value(arg));
@@ -103,7 +104,7 @@ void parse_args(int argc, char *argv[], Config &cfg) {
     } else if (arg.rfind("--init-coverage", 0) == 0) {
       cfg.init_coverage = std::stoi(value(arg));
     } else if (arg.rfind("--speed", 0) == 0) {
-      cfg.speed_ms = std::clamp(std::stoi(value(arg)), 100, 10000);
+      cfg.speed_ms = std::clamp(std::stoi(value(arg)), 10, 10000);
     } else if (arg.rfind("--color-fg", 0) == 0) {
       cfg.color_fg = value(arg);
     } else if (arg.rfind("--color-bg", 0) == 0) {
@@ -177,7 +178,43 @@ void render(const Grid &grid, int window_width, int window_height,
 bool update(Grid &current,
             std::unordered_map<Coord, unsigned int, CoordHash> &heatmap,
             int &heated_cells, float &stable_ratio, int window_width,
-            int window_height, const Config &cfg) {
+            int window_height, Config &cfg) {
+
+  // ---- rainbow color rotation setup --------------------------------------
+  auto to_lower = [](std::string s) -> std::string {
+    for (char &ch : s) {
+      ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return s;
+  };
+
+  static bool init_done = false;
+  static bool fg_rainbow = false;
+  static bool bg_rainbow = false;
+  static std::size_t rainbow_idx = 0;
+
+  // 6-step pleasant “rainbow” around the ANSI basics
+  static const char *RAINBOW_PALETTE[6] = {"red",  "yellow", "green",
+                                           "cyan", "blue",   "magenta"};
+
+  if (!init_done) {
+    fg_rainbow = (to_lower(cfg.color_fg) == "rainbow");
+    bg_rainbow = (to_lower(cfg.color_bg) == "rainbow");
+    init_done = true;
+  }
+
+  if (fg_rainbow) {
+    cfg.color_fg = RAINBOW_PALETTE[rainbow_idx % 6];
+  }
+  if (bg_rainbow) {
+    // small offset so fg/bg don't match exactly; tweak to taste
+    cfg.color_bg = RAINBOW_PALETTE[(rainbow_idx + 3) % 6];
+  }
+  if (fg_rainbow || bg_rainbow) {
+    ++rainbow_idx;
+  }
+  // ------------------------------------------------------------------------
+
   Grid next;
   std::unordered_map<Coord, int, CoordHash> candidate_counts;
   int visible_alive_count = 0;
@@ -210,7 +247,9 @@ bool update(Grid &current,
     if (alive_neighbors == 2 || alive_neighbors == 3) {
       next.insert(loc);
       ++visible_alive_count;
-      ++heatmap[loc];
+      if (heatmap[loc] < UINT_MAX) {
+        ++heatmap[loc];
+      }
     } else {
       if (heatmap[loc] > 0) {
         --heatmap[loc];
@@ -219,11 +258,16 @@ bool update(Grid &current,
   }
 
   // Process births
-  for (const auto &[coord, count] : candidate_counts) {
+  for (const auto &entry : candidate_counts) {
+    const Coord &coord = entry.first;
+    int count = entry.second;
+
     if (count == 3) {
       next.insert(coord);
       ++visible_alive_count;
-      ++heatmap[coord];
+      if (heatmap[coord] < UINT_MAX) {
+        ++heatmap[coord];
+      }
     } else {
       if (heatmap[coord] > 0) {
         --heatmap[coord];
@@ -280,11 +324,9 @@ int main(int argc, char *argv[]) {
       if (cfg.repopulate) {
         current.clear();
         heatmap.clear();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
         std::cout
             << "\033[2J\033[H"; // clear screen and move cursor to top-left
-        std::cout << "This universe is doomed, but there is another...\n";
-        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+        std::cout << "This universe is doomed...\n";
         std::cout << "Creating new Big Bang...\n";
         std::this_thread::sleep_for(std::chrono::milliseconds(3000));
         seed_initial(current, heatmap, grid_window_width, grid_window_height,
@@ -301,9 +343,7 @@ int main(int argc, char *argv[]) {
         heatmap.clear();
         std::cout
             << "\033[2J\033[H"; // clear screen and move cursor to top-left
-        std::cout << "This universe is (more than " << cfg.stable_treshold
-                  << " %) stable, and thus boring...\n";
-        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+        std::cout << "This universe is stable, and thus boring...\n";
         std::cout << "Creating new Big Bang...\n";
         std::this_thread::sleep_for(std::chrono::milliseconds(3000));
         seed_initial(current, heatmap, grid_window_width, grid_window_height,
