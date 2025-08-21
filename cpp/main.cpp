@@ -19,6 +19,31 @@ const std::unordered_map<std::string, int> COLORS = {
     {"black", 0},   {"red", 1},  {"green", 2}, {"yellow", 3},  {"blue", 4},
     {"magenta", 5}, {"cyan", 6}, {"white", 7}, {"default", 9}, {"rainbow", -1}};
 
+// Theme presets: name -> (fg, bg)
+const std::unordered_map<std::string, std::pair<std::string, std::string>>
+    THEMES = {
+        // Dark background
+        {"matrix", {"green", "black"}},
+        {"neon", {"cyan", "black"}},
+        {"sunset", {"yellow", "red"}},
+        {"violet", {"magenta", "blue"}},
+        {"embers", {"red", "black"}},
+
+        // Light background
+        {"newspaper", {"black", "white"}},
+        {"chalkboard", {"white", "black"}}, // high contrast on dark
+        {"pastel", {"blue", "yellow"}},
+
+        // Low contrast / soft
+        {"soft", {"white", "yellow"}},
+        {"dusk", {"cyan", "blue"}},
+        {"sage", {"green", "yellow"}},
+
+        // High contrast
+        {"alert", {"red", "black"}},
+        {"inverse", {"white", "black"}},
+        {"mono", {"default", "default"}}};
+
 using Coord = std::pair<int, int>;
 
 struct CoordHash {
@@ -39,6 +64,7 @@ struct Config {
   bool repopulate = true;
   std::string color_fg = "";
   std::string color_bg = "";
+  std::string theme = ""; // <-- new: theme preset name
   std::string cell = "█";
   std::string wall_horizontal = "─";
   std::string wall_vertical = "│";
@@ -50,8 +76,9 @@ struct Config {
 
 std::string ansi_color_code(const std::string &color, bool background = false) {
   auto it = COLORS.find(color);
-  if (it == COLORS.end())
+  if (it == COLORS.end()) {
     return "";
+  }
   int base = background ? 40 : 30;
   return "\033[" + std::to_string(base + it->second) + "m";
 }
@@ -71,8 +98,9 @@ void parse_args(int argc, char *argv[], Config &cfg) {
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     auto next = [&]() -> std::string {
-      if (i + 1 < argc)
+      if (i + 1 < argc) {
         return argv[++i];
+      }
       return "";
     };
 
@@ -89,13 +117,17 @@ void parse_args(int argc, char *argv[], Config &cfg) {
                    " [--stable-treshold N] (0 < N)\n"
                    " [--init-coverage PERCENT] (0 <= PERCENT <= 100)\n"
                    " [--speed MS] (10 <= MS <= 10000)\n"
+                   " [--theme NAME] (preset fg/bg colors)\n"
                    " [--color-fg COLOR] (sets character color)\n"
                    " [--color-bg COLOR] (sets background color)\n"
                    " [--one-universe] (disables repopulation)\n"
                    " [--tile-cell \"GLYPH\"] (sets cell character)\n\n"
                    "COLOR:\n"
-                   " [black,red,green,cyan,magenta,yellow,blue,white,default,"
-                   "rainbow]\n";
+                   " [black,red,green,yellow,blue,magenta,cyan,white,default,"
+                   "rainbow]\n"
+                   "THEMES:\n"
+                   " [matrix,neon,sunset,violet,embers,newspaper,chalkboard,"
+                   "pastel,soft,dusk,sage,alert,inverse,mono]\n";
       std::exit(0);
     } else if (arg.rfind("--window-width", 0) == 0) {
       cfg.window_width = std::stoi(value(arg));
@@ -105,6 +137,8 @@ void parse_args(int argc, char *argv[], Config &cfg) {
       cfg.init_coverage = std::stoi(value(arg));
     } else if (arg.rfind("--speed", 0) == 0) {
       cfg.speed_ms = std::clamp(std::stoi(value(arg)), 10, 10000);
+    } else if (arg.rfind("--theme", 0) == 0) {
+      cfg.theme = value(arg);
     } else if (arg.rfind("--color-fg", 0) == 0) {
       cfg.color_fg = value(arg);
     } else if (arg.rfind("--color-bg", 0) == 0) {
@@ -115,9 +149,24 @@ void parse_args(int argc, char *argv[], Config &cfg) {
       cfg.repopulate = false;
     } else if (arg.rfind("--stable-treshold", 0) == 0) {
       cfg.stable_treshold = std::stoi(value(arg));
-    };
+    }
   }
-};
+
+  // Apply theme if present. Explicit --color-fg/--color-bg override theme.
+  if (!cfg.theme.empty()) {
+    auto it = THEMES.find(cfg.theme);
+    if (it != THEMES.end()) {
+      if (cfg.color_fg.empty()) {
+        cfg.color_fg = it->second.first;
+      }
+      if (cfg.color_bg.empty()) {
+        cfg.color_bg = it->second.second;
+      }
+    } else {
+      std::cerr << "Unknown theme: " << cfg.theme << "\n";
+    }
+  }
+}
 
 void seed_initial(Grid &grid,
                   std::unordered_map<Coord, unsigned int, CoordHash> &heatmap,
@@ -152,26 +201,29 @@ void render(const Grid &grid, int window_width, int window_height,
 
   // Top border
   std::cout << cfg.corner_ul;
-  for (int i = 0; i < window_width; ++i)
+  for (int i = 0; i < window_width; ++i) {
     std::cout << cfg.wall_horizontal;
+  }
   std::cout << cfg.corner_ur << "\n";
 
   // Grid area
   for (int y = 0; y < render_window_height; ++y) {
     std::cout << cfg.wall_vertical;
     for (int x = 0; x < window_width; ++x) {
-      if (grid.find({x, y}) != grid.end())
+      if (grid.find({x, y}) != grid.end()) {
         std::cout << cfg.cell;
-      else
+      } else {
         std::cout << " ";
+      }
     }
     std::cout << cfg.wall_vertical << "\n";
   }
 
   // Bottom border
   std::cout << cfg.corner_ll;
-  for (int i = 0; i < window_width; ++i)
+  for (int i = 0; i < window_width; ++i) {
     std::cout << cfg.wall_horizontal;
+  }
   std::cout << cfg.corner_lr << ANSI_RESET;
 }
 
